@@ -52,40 +52,44 @@ fn part2(filename: &str) -> i64 {
         }
     }
 
-    let mut cache = HashMap::<(i64, i64), bool>::new();
-    pairs
+    let mut all_squares: Vec<(((i64, i64), (i64, i64)), i64)> = pairs
         .iter()
-        .filter(|(p1, p3)| {
+        .map(|pair @ ((x1, y1), (x2, y2))| (*pair, (x2 - x1).abs().add(1) * (y2 - y1).abs().add(1)))
+        .collect();
+    all_squares.sort_by_key(|(_, x)| std::cmp::Reverse(*x));
+
+    all_squares
+        .iter()
+        .find(|((p1, p3), x)| {
+            println!("{:?} {:?} {:?}", p1, p3, x);
             let p2 = (p3.0, p1.1);
             let p4 = (p1.0, p3.1);
             let mut vertices = HashSet::new();
-            // println!("{:?} {:?}", p1, p3);
-            for x in 0..(p3.0 - p1.0).abs() {
-                let val = if p1.0 > p3.0 {x * -1} else {x};
-                vertices.insert((p1.0 + val, p1.1));
-                vertices.insert((p3.0 - val, p3.1));
+            vertices.insert(*p1);
+            vertices.insert(p2);
+            vertices.insert(*p3);
+            vertices.insert(p4);
+            let corners_inside = vertices.iter().all(|p| is_inside(p, &coords));
+            if corners_inside {
+                for x in 0..(p3.0 - p1.0).abs() + 1 {
+                    let val = if p1.0 > p3.0 { x * -1 } else { x };
+                    vertices.insert((p1.0 + val, p1.1));
+                    vertices.insert((p3.0 - val, p3.1));
+                }
+                for y in 0..(p3.1 - p1.1).abs() + 1 {
+                    let val = if p1.1 > p3.1 { y * -1 } else { y };
+                    vertices.insert((p1.0, p1.1 + val));
+                    vertices.insert((p3.0, p3.1 - val));
+                }
+                return vertices.iter().all(|p| is_inside(p, &coords));
             }
-            for y in 0..(p3.1 - p1.1) {
-                let val = if p1.1 > p3.1 {y * -1} else {y};
-                vertices.insert((p1.0, p1.1 + val));
-                vertices.insert((p3.0, p3.1 - val));
-            }
-            // println!("{:?}", vertices);
-            if vertices.iter().any(|x| cache.contains_key(x) && *(cache.get(x).unwrap()) == false) {
-                println!("cache hit for {:?} {:?}", p1, p3);
-                return false;
-            }
-            let inside = vertices.iter().all(|p| is_inside(&mut cache, p, &coords));
-            // println!("{:?}", inside);
-            inside
+            false
         })
-        .inspect(|x| println!("{:?} {},", x, pairs.iter().position(|c| &c == x).unwrap()))
-        .map(|((x1, y1), (x2, y2))| (x2 - x1).abs().add(1) * (y2 - y1).abs().add(1))
-        .max()
         .unwrap()
+        .1
 }
 
-fn is_inside(cache: &mut HashMap<(i64, i64), bool>, point: &(i64, i64), verticies: &Vec<(i64, i64)>) -> bool {
+fn is_inside(point: &(i64, i64), verticies: &Vec<(i64, i64)>) -> bool {
     let mut crossing = HashSet::<(i8, i8)>::new();
     for i in 0..verticies.len() {
         let p1 = verticies[i];
@@ -93,7 +97,6 @@ fn is_inside(cache: &mut HashMap<(i64, i64), bool>, point: &(i64, i64), verticie
         if (point.0 == p2.0 && point.0 == p1.0 && point.1 <= max(p1.1, p2.1) && point.1 >= min(p1.1, p2.1))
             || (point.1 == p1.1 && point.1 == p2.1 && point.0 <= max(p1.0, p2.0) && point.0 >= min(p1.0, p2.0))
         {
-            cache.insert(*point, true);
             return true;
         }
         if (point.0 >= min(p1.0, p2.0) && point.0 <= max(p1.0, p2.0) && p1.1 == p2.1 && point.1 <= p1.1) || (point.0 == p1.0 && p1.0 == p2.0 && point.1 > p1.1 && point.1 > p2.1){
@@ -106,8 +109,5 @@ fn is_inside(cache: &mut HashMap<(i64, i64), bool>, point: &(i64, i64), verticie
             crossing.insert((-1, 0));
         }
     }
-    // println!("xd {:?} {:?}", point, crossing.len());
-    let res = crossing.len() == 4;
-    cache.insert(*point, true);
-    res
+    crossing.len() == 4
 }
