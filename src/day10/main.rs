@@ -1,5 +1,6 @@
 use std::collections::{HashSet, VecDeque};
 use std::fs;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 fn main() {
     let filename = "data2.txt";
@@ -106,95 +107,147 @@ fn part2(filename: &str) -> i32 {
 
     let mut result = 0;
     for (index, target_joltage) in target_joltages.iter().enumerate() {
-        println!("processing {:?}, current res = {}", target_joltage, result);
+        let start = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+        println!("processing {:?}, current res = {}, button_len = {}", target_joltage, result, buttons[index].len());
         result += process_joltage(&target_joltage, &buttons[index]);
+        let end = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+        println!("processed {:?} in {:?}\n", target_joltage, end - start);
     }
 
     result
 }
 
 fn process_joltage(target_joltage: &Vec<i32>, buttons: &Vec<Vec<usize>>) -> i32 {
-    let mut cache = HashSet::<(Vec<i32>, &Vec<usize>, i32)>::new();
+    let mut cache = HashSet::<(u128, &Vec<usize>, i32)>::new();
+    let encoded_target_joltage = encode_joltages(target_joltage);
 
-    let mut queue = VecDeque::from_iter(reduce_possible_presses(&mut cache, &target_joltage, &vec![0; target_joltage.len()], 0, &buttons).into_iter());
+    let mut queue = VecDeque::from_iter(reduce_possible_presses(&mut cache, encoded_target_joltage, 0, 0, &buttons, target_joltage.len()).into_iter());
+
     while let Some(queue_message) = queue.pop_front() {
         if cache.contains(&queue_message) {
             continue;
         }
+        cache.insert(queue_message.clone());
         let (processed_joltage, button_to_press, press_count) = &queue_message;
-        if processed_joltage == target_joltage {
+        if *press_count > 300 {
+            println!("LIMITER HIT");
+            continue;
+        }
+        if joltages_equal(*processed_joltage, encoded_target_joltage, target_joltage.len()) {
             println!("got result from {:?} = {}", target_joltage, press_count);
             return *press_count;
         }
         let mut new_joltage = processed_joltage.clone();
         for btn_index in button_to_press.iter() {
-            new_joltage[*btn_index] += 1;
+            new_joltage = increment_joltage(new_joltage, *btn_index)
         }
-        if new_joltage == *target_joltage {
+        if joltages_equal(new_joltage, encoded_target_joltage, target_joltage.len()) {
             println!("got result from {:?} = {}", target_joltage, press_count + 1);
             return press_count + 1;
         }
-        if new_joltage.iter().enumerate().any(|(idx, elemeent)| elemeent > &target_joltage[idx]) {
-            cache.insert(queue_message);
+        if (0..target_joltage.len()).any(|idx| get_joltage(new_joltage, idx) > get_joltage(encoded_target_joltage, idx)) {
             continue
         }
 
-        let new_entries = reduce_possible_presses(&mut cache, &target_joltage, &new_joltage, press_count + 1, &buttons);
+        let new_entries = reduce_possible_presses(&mut cache, encoded_target_joltage, new_joltage, press_count + 1, &buttons, target_joltage.len());
         queue.extend(new_entries.into_iter().filter(|x| !cache.contains(x)));
-        cache.insert(queue_message);
     }
     0
 }
 
-fn reduce_possible_presses<'a>(cache: &mut HashSet<(Vec<i32>, &'a Vec<usize>, i32)>, target_joltage: &Vec<i32>, current_joltage: &Vec<i32>, current_press: i32, buttons: &'a Vec<Vec<usize>>) -> HashSet<(Vec<i32>, &'a Vec<usize>, i32)> {
+fn reduce_possible_presses<'a>(
+    cache: &mut HashSet<(u128, &'a Vec<usize>, i32)>,
+    target_joltage: u128,
+    current_joltage: u128,
+    current_press: i32,
+    buttons: &'a Vec<Vec<usize>>,
+    joltage_length: usize
+) -> Vec<(u128, &'a Vec<usize>, i32)> {
     // println!("reduc {:?} {}", current_joltage, current_press);
-    let min_press_joltage = target_joltage.iter()
-        .enumerate()
-        .map(|(i, val)| (i, val, buttons.iter().filter(|btn| btn.contains(&i)).count()))
-        .filter(|(i, val, _)| current_joltage[*i] < **val)
-        .min_by_key(|(_,_,count)| *count)
+    let min_press_joltage = (0..joltage_length)
+        .map(|i| {
+            let current_val = get_joltage(current_joltage, i);
+            let target_val = get_joltage(target_joltage, i);
+            (i, target_val, buttons.iter().filter(|btn| btn.contains(&i)).count(), current_val)
+        }
+        )
+        .filter(|(_, val, _, current_val)| current_val < val)
+        .min_by_key(|(_,_,count, _)| *count)
         .unwrap();
     // println!("{:?} {:?}", min_press_joltage, current_joltage);
-    let affected_buttons = buttons.iter().filter(|btn| btn.contains(&min_press_joltage.0) && btn.iter().all(|&idx| current_joltage[idx] < target_joltage[idx])).collect::<Vec<&Vec<usize>>>();
+    let mut affected_buttons = buttons.iter().filter(|btn| btn.contains(&min_press_joltage.0) && btn.iter().all(|&idx| get_joltage(current_joltage, idx) < get_joltage(target_joltage, idx))).collect::<Vec<&Vec<usize>>>();
     if affected_buttons.is_empty() {
-        return HashSet::new();
+        return Vec::new();
     }
+    affected_buttons.sort();
     // let not_affected_buttons = buttons.iter().filter(|btn| !btn.contains(&min_press_joltage.0)).collect::<Vec<&Vec<usize>>>();
     let mut reduction_queue = VecDeque::from(affected_buttons.iter()
         .map(|&btn| (current_joltage.clone(), btn, current_press))
-        .collect::<Vec<(Vec<i32>, &Vec<usize>, i32)>>()
+        .collect::<Vec<(u128, &Vec<usize>, i32)>>()
     );
-    let mut queue = HashSet::<(Vec<i32>, &Vec<usize>, i32)>::new();
+    let mut queue = Vec::<(u128, &Vec<usize>, i32)>::new();
     while let Some(queue_message) = reduction_queue.pop_front() {
         if cache.contains(&queue_message) {
             continue;
         }
+        cache.insert(queue_message.clone());
         let (processed_joltage, button_to_press, press_count) = &queue_message;
         let mut new_joltage = processed_joltage.clone();
         for btn_index in button_to_press.iter() {
-            new_joltage[*btn_index] += 1;
+            new_joltage = increment_joltage(new_joltage, *btn_index)
         }
-        if new_joltage.iter().enumerate().any(|(idx, elemeent)| elemeent > &target_joltage[idx]) {
+        if (0..joltage_length).any(|idx| get_joltage(new_joltage, idx) > get_joltage(target_joltage, idx)) {
             continue
         }
-        if new_joltage[min_press_joltage.0] == target_joltage[min_press_joltage.0] {
+        if get_joltage(new_joltage, min_press_joltage.0) == get_joltage(target_joltage, min_press_joltage.0) {
             buttons
                 .iter()
-                .filter(|btn| btn.iter().filter(|idx| **idx != min_press_joltage.0).all(|&idx| new_joltage[idx] <= target_joltage[idx]))
+                .filter(|btn| btn.iter().filter(|idx| **idx != min_press_joltage.0).all(|&idx| get_joltage(new_joltage, idx) <= get_joltage(target_joltage, idx)))
                 .map(|btn| (new_joltage.clone(), btn, press_count + 1))
                 .filter(|element| !cache.contains(element))
-                .for_each(|el| { queue.insert(el); });
-            cache.insert(queue_message);
+                .for_each(|el| { queue.push(el); });
             continue;
         }
         affected_buttons
             .iter()
-            .filter(|btn| btn.iter().all(|&idx| new_joltage[idx] < target_joltage[idx]))
+            .filter(|btn| btn.iter().all(|&idx| get_joltage(new_joltage, idx) < get_joltage(target_joltage, idx)))
             .map(|&btn| (new_joltage.clone(), btn, press_count + 1))
             .filter(|element| !cache.contains(element))
             .for_each(|el| reduction_queue.push_back(el));
-        cache.insert(queue_message);
     }
     // println!("{:?}", queue);
     queue
+}
+
+fn encode_joltages(joltages: &Vec<i32>) -> u128 {
+    let mut state = 0u128;
+    for (i, &val) in joltages.iter().enumerate() {
+        state |= ((val as u128) & 0xFF) << (i * 8)
+    }
+    state
+}
+
+fn get_joltage(encoded: u128, idx: usize) -> i32 {
+    ((encoded >> (idx * 8)) & 0xFF) as i32
+}
+
+
+fn increment_joltage(encoded: u128, idx: usize) -> u128 {
+    let shift = idx * 8;
+    let current = (encoded >> shift) & 0xFF;
+    let updated = current + 1;
+
+    let clear_mask = !(0xFFu128 << shift);
+    let cleared = encoded & clear_mask;
+
+    cleared | (updated << shift)
+}
+
+fn joltages_equal(encoded1: u128, encoded2: u128, n: usize) -> bool {
+    for i in 0..n {
+        if get_joltage(encoded1, i) != get_joltage(encoded2, i) {
+            return false;
+        }
+    }
+    true
 }
