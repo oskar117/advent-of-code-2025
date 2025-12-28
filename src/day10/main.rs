@@ -1,7 +1,6 @@
-use std::collections::{BTreeSet, HashSet, VecDeque};
-use std::path::Component::ParentDir;
+use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
+use std::fs;
 use std::time::{SystemTime, UNIX_EPOCH};
-use std::{fs, thread};
 
 //bottlenecks: 91, 112, 160, 168
 fn main() {
@@ -74,7 +73,7 @@ fn part1(filename: &str) -> i32 {
     result
 }
 
-fn find_patterns(light: Vec<bool>, buttons: &Vec<Vec<usize>>) -> BTreeSet<BTreeSet<Vec<usize>>> {
+fn find_patterns(light: &Vec<bool>, buttons: &Vec<Vec<usize>>) -> BTreeSet<BTreeSet<Vec<usize>>> {
     let mut queue = VecDeque::from(
         buttons
             .clone()
@@ -128,7 +127,7 @@ fn part2(filename: &str) -> i32 {
         .map(|x| x.split_whitespace().collect::<Vec<&str>>())
         .collect::<Vec<Vec<&str>>>();
 
-    let target_joltages = input[90..]
+    let target_joltages = input[0..]
         .iter()
         .map(|line| line.last().unwrap())
         .map(|x| {
@@ -139,7 +138,7 @@ fn part2(filename: &str) -> i32 {
         })
         .collect::<Vec<Vec<i32>>>();
 
-    let buttons = input[90..]
+    let buttons = input[0..]
         .iter()
         .map(|line| {
             line[1..line.len() - 1]
@@ -164,50 +163,8 @@ fn part2(filename: &str) -> i32 {
             buttons[index].len()
         );
 
-        let buttons = buttons[index].clone();
-        let light = target_joltage
-            .iter()
-            .map(|x| x % 2 == 1)
-            .collect::<Vec<bool>>();
-        let patterns = find_patterns(light, buttons.as_ref());
-        println!("found {:?} patterns", patterns.len());
-
-        let mut local_results = Vec::new();
-        if patterns.is_empty() {
-            let loc_joltage = target_joltage.clone();
-            // local_results.push(thread::spawn(move || {
-            //     2 * process_joltage(
-            //         &loc_joltage.iter().map(|x| x / 2).collect(),
-            //         &buttons,
-            //     )
-            // }));
-        } else {
-            for pattern in patterns.iter() {
-                let mut local_target = target_joltage.clone();
-                for btn in pattern.iter() {
-                    for i in btn {
-                        local_target[*i] -= 1
-                    }
-                }
-                let patter_len = pattern.len();
-                let btns = buttons.clone();
-                // let handle = thread::spawn(move || {
-                //     (2 * process_joltage(
-                //         &local_target.iter().map(|x| x / 2).collect(),
-                //         &btns
-                //     )) + patter_len as i32
-                // });
-                // local_results.push(handle);
-                local_results.push(
-                    (2 * process_joltage(
-                                &local_target.iter().map(|x| x / 2).collect(),
-                                &btns
-                            )) + patter_len as i32
-                )
-            }
-        }
-        // let loc_res = local_results.into_iter().map(|thread| thread.join().unwrap()).min().unwrap();
-        let loc_res = local_results.into_iter().min().unwrap();
+        let mut cache = HashMap::new();
+        let loc_res = explore_path(&mut cache, target_joltage.clone(), &buttons[index]);
         result += loc_res;
         let end = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
         println!(
@@ -219,6 +176,65 @@ fn part2(filename: &str) -> i32 {
     }
 
     result
+}
+
+fn explore_path(cache: &mut HashMap<Vec<i32>, i32>, target_joltage: Vec<i32>, buttons: &Vec<Vec<usize>>) -> i32 {
+    if cache.contains_key(&target_joltage) {
+        return cache[&target_joltage];
+    }
+    if target_joltage.iter().all(|&x| x <= 0) {
+        return 0;
+    }
+    let buttons = buttons.clone();
+    let light = target_joltage
+        .iter()
+        .map(|x| x % 2 == 1)
+        .collect::<Vec<bool>>();
+    let patterns = find_patterns(&light, buttons.as_ref());
+
+    // println!("got result from {:?} = {:?}, {:?}", target_joltage, patterns, light);
+    let mut local_results = Vec::new();
+    if patterns.is_empty() {
+        // return 1000;
+        // let loc_joltage = target_joltage.clone();
+        local_results
+            .push(1000);
+    } else {
+        for pattern in patterns.iter() {
+            let mut local_target = target_joltage.clone();
+            for btn in pattern.iter() {
+       /*         if btn.iter().any(|&x| x < 1) {
+                    continue;
+                }*/
+                for i in btn {
+                    local_target[*i] -= 1
+                }
+            }
+            if local_target.iter().any(|&x| x < 0) {
+                // println!("skipping {:?} {:?} {:?}", target_joltage, local_target, pattern);
+                continue;
+            }
+            // println!("local: {:?} -> {:?} {:?}", target_joltage, local_target, pattern);
+            let patter_len = pattern.len();
+            let btns = buttons.clone();
+            // let handle = thread::spawn(move || {
+            //     (2 * process_joltage(
+            //         &local_target.iter().map(|x| x / 2).collect(),
+            //         &btns
+            //     )) + patter_len as i32
+            // });
+            // local_results.push(handle);
+            local_results.push(
+                2 * explore_path(cache, local_target.iter().map(|x| x / 2).collect(), &btns)
+                    + patter_len as i32,
+            )
+        }
+    }
+    // let loc_res = local_results.into_iter().map(|thread| thread.join().unwrap()).min().unwrap();
+    let loc_res = local_results.iter().min().unwrap_or(&1000);
+    cache.insert(target_joltage.clone(), *loc_res);
+    // println!("target_joltage: {:?} {} {:?} {:?}", target_joltage, loc_res, local_results, patterns);
+    *loc_res
 }
 
 fn process_joltage(target_joltage: &Vec<i32>, buttons: &Vec<Vec<usize>>) -> i32 {
@@ -242,10 +258,16 @@ fn process_joltage(target_joltage: &Vec<i32>, buttons: &Vec<Vec<usize>>) -> i32 
         if cache.contains(&queue_message) {
             continue;
         }
+        // if cache.len() > 1000000 {
+        //     cache.clear()
+        // }
         cache.insert(queue_message.clone());
         // let peek: Vec<_> = (0..target_joltage.len()).map(|x| get_joltage(queue_message.0, x)).collect();
         // println!("{:?} {:?} {}", peek, queue_message.1, queue_message.2);
         let (processed_joltage, button_to_press, press_count) = &queue_message;
+        // if *button_to_press < *previous_button {
+        //     continue;
+        // }
         if *press_count > 300 {
             println!("LIMITER HIT");
             continue;
@@ -274,7 +296,6 @@ fn process_joltage(target_joltage: &Vec<i32>, buttons: &Vec<Vec<usize>>) -> i32 
             // println!("got result from {:?} = {}", target_joltage, press_count + 1);
             if *press_count + 1 < min {
                 min = *press_count + 1;
-                println!("found res {}", min);
             }
             continue;
         }
@@ -283,7 +304,7 @@ fn process_joltage(target_joltage: &Vec<i32>, buttons: &Vec<Vec<usize>>) -> i32 
         {
             continue;
         }
-        if *press_count+1 > min && min != 1000 {
+        if *press_count + 1 > min && min != 1000 {
             // println!("larger than min");
             continue;
         }
@@ -298,7 +319,6 @@ fn process_joltage(target_joltage: &Vec<i32>, buttons: &Vec<Vec<usize>>) -> i32 
         );
         queue.extend(new_entries.into_iter().filter(|x| !cache.contains(x)));
     }
-    println!("got result from {:?} = {}", target_joltage, min);
     min
 }
 
@@ -353,6 +373,9 @@ fn reduce_possible_presses<'a>(
         }
         cache.insert(queue_message.clone());
         let (processed_joltage, button_to_press, press_count) = &queue_message;
+        // if *button_to_press < *previous_button {
+        //     continue;
+        // }
         let mut new_joltage = processed_joltage.clone();
         for btn_index in button_to_press.iter() {
             new_joltage = increment_joltage(new_joltage, *btn_index)
